@@ -18,7 +18,17 @@ export async function POST() {
   } catch {}
 
   const resp = NextResponse.json({ ok: true })
-  resp.cookies.set("auth_token", "", { httpOnly: true, path: "/", maxAge: 0 })
+
+  // ✅ 付与時と同じ属性で削除（maxAge: 0 ＆ 期限過去）
+  resp.cookies.set("auth_token", "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+    expires: new Date(0),
+  })
+
   return resp
 }
 
