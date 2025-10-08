@@ -27,27 +27,21 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
-
     try {
-      const success = await login(formData.email, formData.password)
-      if (success) {
-        router.push("/dashboard")
-      }
-    } catch (err) {
+      await login(formData.email, formData.password)
+      router.push("/dashboard")
+    } catch {
       setError("ログインに失敗しました。もう一度お試しください。")
     }
-  }
+}
 
   const handleDemoLogin = async () => {
     setFormData({ email: "demo@example.com", password: "demo123" })
     setError("")
-
     try {
-      const success = await login("demo@example.com", "demo123")
-      if (success) {
-        router.push("/dashboard")
-      }
-    } catch (err) {
+      await login("demo@example.com", "demo123")
+      router.push("/dashboard")
+    } catch {
       setError("ログインに失敗しました。もう一度お試しください。")
     }
   }
