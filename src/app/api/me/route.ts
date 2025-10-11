@@ -1,30 +1,62 @@
 // src/app/api/me/route.ts
-import { cookies } from "next/headers"
 import { NextResponse } from "next/server"
+import {
+  API_BASE,
+  readAuthTokenFromCookies,
+  safeJSON,
+} from "../_auth-helpers" // ← 既存ヘルパを再利用（パス注意）
 
-const API = resolveApiBase()
+export const runtime = "nodejs"
+export const dynamic = "force-dynamic"
 
-export async function GET() {
-  const store = await cookies() // ← await 必須
-  const token = store.get("auth_token")?.value
-  if (!token) return NextResponse.json({ user: null }, { status: 401 })
+// Rails 側の「自分情報」エンドポイント（環境で差し替え可）
+const RAILS_ME_PATH = process.env.NEXT_PUBLIC_RAILS_ME_PATH || "/me"
 
-  const res = await fetch(`${API}/me`, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-  })
-  const text = await res.text()
-  return new NextResponse(text, { status: res.status })
+type User = { id: number; email: string; name?: string }
+type MeResponse = { user?: User }
+
+function isUser(x: unknown): x is User {
+  if (typeof x !== "object" || x === null) return false
+  const r = x as Record<string, unknown>
+  return typeof r.id === "number" && typeof r.email === "string"
+}
+function isMeResponse(x: unknown): x is MeResponse {
+  if (typeof x !== "object" || x === null) return false
+  const u = (x as Record<string, unknown>).user
+  return u === undefined || isUser(u)
 }
 
-function resolveApiBase() {
-  const strip = (s?: string) => s?.replace(/\/$/, "")
-  return (
-    strip(process.env.API_BASE_URL) ||                 // ← サーバ専用（推奨）
-    strip(process.env.INTERNAL_API_URL) ||            // ← 代替
-    strip(process.env.NEXT_PUBLIC_API_BASE_URL) ||    // ← 最後の手段
-    (process.env.DOCKER === "1" || process.env.CONTAINER === "true"
-      ? "http://api:3001"                             // Docker 内
-      : "http://localhost:3001")                      // ローカル直起動
-  ) as string
+export async function GET() {
+  // Cookie から JWT
+  const token = await readAuthTokenFromCookies()
+  if (!token) {
+    return NextResponse.json({ user: null }, { status: 401 })
+  }
+
+  // Rails の /me に中継
+  const railsRes = await fetch(`${API_BASE}${RAILS_ME_PATH}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    cache: "no-store",
+  })
+
+  const raw = await railsRes.text()
+  const data = safeJSON<unknown>(raw) ?? null
+
+  // 認証失敗などは 401/403 に揃えて返す（本文は { user: null } に統一）
+  if (!railsRes.ok) {
+    return NextResponse.json({ user: null }, { status: railsRes.status === 403 ? 401 : railsRes.status })
+  }
+
+  // 期待形に正規化
+  if (isMeResponse(data)) {
+    // Rails 側が { user: {...} } を返す前提。なければ null。
+    return NextResponse.json({ user: data?.user ?? null }, { status: 200 })
+  }
+
+  // 予期しない本文の場合も安全側で null を返す
+  return NextResponse.json({ user: null }, { status: 200 })
 }

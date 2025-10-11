@@ -3,18 +3,19 @@ import "server-only"
 import { cookies } from "next/headers"
 import type { NextResponse } from "next/server"
 
+/** 認証Cookie名（変更する場合は middleware なども揃えてください） */
 export const AUTH_COOKIE_NAME = "auth_token"
 
-/** Rails API のベースURLを解決（Docker: api:3000 / ローカル: localhost:3000 を既定） */
+/** APIベースURL解決（Docker/ローカル/環境変数すべて考慮） */
 export function resolveApiBase(): string {
   const strip = (v?: string) => v?.replace(/\/$/, "")
   return (
-    strip(process.env.API_BASE_URL) ||              // サーバ専用（例: http://api:3000）
+    strip(process.env.API_BASE_URL) ||              // サーバ専用（推奨）
     strip(process.env.INTERNAL_API_URL) ||          // 代替
-    strip(process.env.NEXT_PUBLIC_API_BASE_URL) ||  // 最後の手段（露出注意）
+    strip(process.env.NEXT_PUBLIC_API_BASE_URL) ||  // 最後の手段（公開）
     (process.env.DOCKER === "1" || process.env.CONTAINER === "true"
-      ? "http://api:3000"                           // Docker 内
-      : "http://localhost:3000")                    // ローカル直起動
+      ? "http://api:3001"                           // Docker 内
+      : "http://localhost:3001")                    // ローカル直起動
   ) as string
 }
 

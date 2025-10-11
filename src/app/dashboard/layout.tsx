@@ -1,13 +1,13 @@
-// src/app/dashboard/layout.tsx ※サーバコンポーネント（デフォルト）
-// これを入れると、直接アクセス時もSSR段階で弾けます
-import { cookies } from "next/headers"
+// src/app/dashboard/layout.tsx
 import { redirect } from "next/navigation"
+import { serverFetchMe } from "@/app/_utils/server/fetchMe"
 
-export const dynamic = "force-dynamic" // 認証ありページはキャッシュ無効が安全
+export const dynamic = "force-dynamic"
 
-export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const store = await cookies()
-  const token = store.get("auth_token")?.value
-  if (!token) redirect("/login")
+export default async function DashboardLayout({
+  children,
+}: { children: React.ReactNode }) {
+  const me = await serverFetchMe()
+  if (!me) redirect("/login")
   return <>{children}</>
 }
