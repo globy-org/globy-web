@@ -1,72 +1,40 @@
 // src/app/api/auth/login/route.ts
-import { NextResponse } from "next/server"
-import {
-  API_BASE,
-  pickJwtFrom,
-  setAuthCookie,
-  safeJSON,
-} from "../../_auth-helpers"
+import { NextResponse, type NextRequest } from 'next/server'
+import { resolveApiBase, attachAuthCookie, clearAuthCookiesOn } from '../../_auth-helpers'
 
-export const runtime = "nodejs"
-export const dynamic = "force-dynamic"
-
-type LoginBody = { email: string; password: string }
-
-// ---- 設定（ENVで上書き可） ----
-// Devise 既定: /users/sign_in
-// devise_for :users, path: "auth" 等なら /auth/sign_in
-const RAILS_LOGIN_PATH =
-  process.env.NEXT_PUBLIC_RAILS_LOGIN_PATH || "/users/sign_in"
-
-// Devise + devise-jwt なら "devise"（{ user: { email, password } }）
-// devise_token_auth なら "token_auth"（{ email, password }）
-const BODY_STYLE = process.env.RAILS_LOGIN_BODY_STYLE || "devise" // "devise" | "token_auth"
-
-function buildRailsLoginBody(email: string, password: string): string {
-  if (BODY_STYLE === "token_auth") {
-    return JSON.stringify({ email, password })
+export async function POST(req: NextRequest) {
+  const { email, password } = await req.json().catch(() => ({}))
+  if (!email || !password) {
+    return NextResponse.json({ ok: false, message: 'メール/パスワードが未入力です' }, { status: 400 })
   }
-  return JSON.stringify({ user: { email, password } })
-}
 
-// レスポンス本文に token が含まれる可能性に備えた型ガード
-type MaybeToken = { token?: string }
-function hasToken(x: unknown): x is MaybeToken {
-  return typeof x === "object" && x !== null && "token" in x
-}
-
-export async function POST(req: Request) {
-  let body: LoginBody
   try {
-    body = (await req.json()) as LoginBody
+    const apiBase = resolveApiBase()
+    const r = await fetch(`${apiBase}/users/sign_in`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify({ user: { email, password } }),
+    })
+
+    const data = await r.json().catch(() => ({}))
+
+    if (!r.ok) {
+      const res = NextResponse.json(
+        { ok: false, code: data?.code, message: data?.detail || 'ログインに失敗しました' },
+        { status: r.status },
+      )
+      clearAuthCookiesOn(res)
+      return res
+    }
+
+    const token = data?.token as string | undefined
+    const res = NextResponse.json({ ok: true, user: data?.user ?? null }, { status: 200 })
+    if (token) attachAuthCookie(res, token)
+    return res
   } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 })
+    const res = NextResponse.json({ ok: false, message: 'サーバに接続できませんでした' }, { status: 502 })
+    clearAuthCookiesOn(res)
+    return res
   }
-
-  // Rails のログインへ中継
-  const railsRes = await fetch(`${API_BASE}${RAILS_LOGIN_PATH}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: buildRailsLoginBody(body.email, body.password),
-  })
-
-  const raw = await railsRes.text()
-  const data = safeJSON<unknown>(raw) ?? raw
-
-  // そのままステータスを踏襲して返す
-  const resp = NextResponse.json(data, { status: railsRes.status })
-
-  // 成功時は JWT を Cookie に保存（ヘッダ優先 → 本文 token フォールバック）
-  if (railsRes.ok) {
-    const headerToken = pickJwtFrom(railsRes)
-    const bodyToken = hasToken(data) ? data.token ?? null : null
-    const token = headerToken || bodyToken
-    if (token) setAuthCookie(resp, token)
-  }
-
-  return resp
-}
-
-export async function GET() {
-  return NextResponse.json({ error: "Method Not Allowed" }, { status: 405 })
 }

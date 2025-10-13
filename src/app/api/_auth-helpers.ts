@@ -1,63 +1,48 @@
 // src/app/api/_auth-helpers.ts
-import "server-only"
-import { cookies } from "next/headers"
-import type { NextResponse } from "next/server"
+import type { NextRequest } from 'next/server'
+import { NextResponse } from 'next/server'
 
-/** 認証Cookie名（変更する場合は middleware なども揃えてください） */
-export const AUTH_COOKIE_NAME = "auth_token"
+export const AUTH_COOKIE_NAME = 'auth_token'
+export const REFRESH_COOKIE_NAME = 'refresh_token' // 未使用なら消してOK
 
-/** APIベースURL解決（Docker/ローカル/環境変数すべて考慮） */
 export function resolveApiBase(): string {
-  const strip = (v?: string) => v?.replace(/\/$/, "")
+  const strip = (v?: string) => v?.replace(/\/$/, '')
   return (
-    strip(process.env.API_BASE_URL) ||              // サーバ専用（推奨）
-    strip(process.env.INTERNAL_API_URL) ||          // 代替
-    strip(process.env.NEXT_PUBLIC_API_BASE_URL) ||  // 最後の手段（公開）
-    (process.env.DOCKER === "1" || process.env.CONTAINER === "true"
-      ? "http://api:3001"                           // Docker 内
-      : "http://localhost:3001")                    // ローカル直起動
+    strip(process.env.API_BASE_URL) ||
+    strip(process.env.INTERNAL_API_URL) ||
+    strip(process.env.NEXT_PUBLIC_API_BASE_URL) ||
+    'http://localhost:3001'
   ) as string
 }
 
-/** 互換: 直接使いたい場合の定数 */
-export const API_BASE = resolveApiBase()
-
-/** JSON を安全に parse */
-export function safeJSON<T = unknown>(s: string): T | null {
-  try { return JSON.parse(s) as T } catch { return null }
+/** リクエストからJWTを取得 */
+export function getJwtFromReq(req: NextRequest): string | null {
+  return req.cookies.get(AUTH_COOKIE_NAME)?.value ?? null
 }
 
-/** Cookie から JWT を取得（Next.js 15: cookies() は await 必須） */
-export async function readAuthTokenFromCookies(): Promise<string | null> {
-  const store = await cookies()
-  return store.get(AUTH_COOKIE_NAME)?.value ?? null
-}
-
-/** Railsのレスポンスから Authorization ヘッダの JWT を取り出す */
-export function pickJwtFrom(res: Response): string | null {
-  const auth = res.headers.get("Authorization") // "Bearer xxx"
-  return auth?.replace(/^Bearer\s+/i, "") ?? null
-}
-
-/** Cookie設定オプション（付与/削除で共有） */
-export const cookieOptions = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "lax" as const,
-  path: "/",
-  maxAge: 60 * 60 * 24, // 1日
-}
-
-/** 認証Cookieをセット */
-export function setAuthCookie(resp: NextResponse, token: string): void {
-  resp.cookies.set(AUTH_COOKIE_NAME, token, cookieOptions)
-}
-
-/** 認証Cookieを削除（付与時と同属性で無効化） */
-export function clearAuthCookie(resp: NextResponse): void {
-  resp.cookies.set(AUTH_COOKIE_NAME, "", {
-    ...cookieOptions,
-    maxAge: 0,
-    expires: new Date(0),
+/** レスポンスに認証クッキーを付与 */
+export function attachAuthCookie(res: NextResponse, token: string) {
+  const secure = process.env.NODE_ENV === 'production'
+  res.cookies.set({
+    name: AUTH_COOKIE_NAME,
+    value: token,
+    httpOnly: true,
+    sameSite: 'lax',
+    secure,
+    path: '/',
   })
+}
+
+/** レスポンスで認証クッキーを削除 */
+export function clearAuthCookiesOn(res: NextResponse) {
+  const secure = process.env.NODE_ENV === 'production'
+  const base = { httpOnly: true, sameSite: 'lax' as const, secure, path: '/' }
+  res.cookies.set({ name: AUTH_COOKIE_NAME, value: '', maxAge: 0, ...base })
+  res.cookies.set({ name: REFRESH_COOKIE_NAME, value: '', maxAge: 0, ...base })
+}
+
+/** Authorization ヘッダ（Bearer）を付ける */
+export function withBearerFromReq(req: NextRequest, headers: HeadersInit = {}): HeadersInit {
+  const jwt = getJwtFromReq(req)
+  return jwt ? { ...headers, Authorization: `Bearer ${jwt}` } : headers
 }

@@ -1,48 +1,77 @@
-"use client"
+// src/app/(public)/login/page.tsx
+'use client'
 
-import type React from "react"
+import type React from 'react'
+import { useState } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { MessageCircle, Eye, EyeOff, Loader2 } from 'lucide-react'
+import { ThemeToggle } from '@/components/theme-toggle'
 
-import { useState } from "react"
-import Link from "next/link"
-import { useRouter } from "next/navigation"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { MessageCircle, Eye, EyeOff, Loader2 } from "lucide-react"
-import { ThemeToggle } from "@/components/theme-toggle"
-import { useAuth } from "@/contexts/auth-context"
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (typeof err === 'string') return err
+  try { return JSON.stringify(err) } catch { return '不明なエラーが発生しました' }
+}
 
 export default function LoginPage() {
-  const [showPassword, setShowPassword] = useState(false)
-  const [formData, setFormData] = useState({
-    email: "",
-    password: "",
-  })
-  const [error, setError] = useState("")
-
-  const { login, isLoading } = useAuth()
   const router = useRouter()
+  const [showPassword, setShowPassword] = useState(false)
+  const [formData, setFormData] = useState({ email: '', password: '' })
+  const [error, setError] = useState<string>('')
+  const [isLoading, setIsLoading] = useState(false)
+
+  const doLogin = async (email: string, password: string) => {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const msg =
+        (typeof data?.message === 'string' && data.message) ||
+        (res.status === 401
+          ? 'メールアドレスまたはパスワードが正しくありません。'
+          : `ログインに失敗しました（${res.status}）`)
+      throw new Error(msg)
+    }
+    // 正常時は HttpOnly クッキーがサーバ側でセット済み
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setError("")
+    setError('')
+    setIsLoading(true)
     try {
-      await login(formData.email, formData.password)
-      router.push("/dashboard")
-    } catch {
-      setError("ログインに失敗しました。もう一度お試しください。")
+      await doLogin(formData.email, formData.password)
+      router.push('/dashboard')
+    } catch (err: unknown) {
+      setError(getErrorMessage(err))
+    } finally {
+      setIsLoading(false)
     }
-}
+  }
 
   const handleDemoLogin = async () => {
-    setFormData({ email: "demo@example.com", password: "demo123" })
-    setError("")
+    // デモ用資格情報（必要に応じて変更）
+    const demoEmail = 'demo@example.com'
+    const demoPassword = 'demo123'
+    setFormData({ email: demoEmail, password: demoPassword })
+    setError('')
+    setIsLoading(true)
     try {
-      await login("demo@example.com", "demo123")
-      router.push("/dashboard")
-    } catch {
-      setError("ログインに失敗しました。もう一度お試しください。")
+      await doLogin(demoEmail, demoPassword)
+      router.push('/dashboard')
+    } catch (err: unknown) {
+      setError(getErrorMessage(err))
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -66,6 +95,7 @@ export default function LoginPage() {
             <CardTitle className="text-2xl text-white">おかえりなさい</CardTitle>
             <CardDescription className="text-white/70">サインインして会話を続けましょう</CardDescription>
           </CardHeader>
+
           <CardContent>
             <div className="mb-6">
               <Button
@@ -80,10 +110,12 @@ export default function LoginPage() {
                     ログイン中...
                   </>
                 ) : (
-                  "デモアカウントでログイン"
+                  'デモアカウントでログイン'
                 )}
               </Button>
-              <p className="text-xs text-white/50 text-center mt-2">メール: demo@example.com / パスワード: 任意</p>
+              <p className="text-xs text-white/50 text-center mt-2">
+                メール: demo@example.com / パスワード: demo123
+              </p>
             </div>
 
             <div className="relative mb-6">
@@ -125,7 +157,7 @@ export default function LoginPage() {
                 <div className="relative">
                   <Input
                     id="password"
-                    type={showPassword ? "text" : "password"}
+                    type={showPassword ? 'text' : 'password'}
                     placeholder="パスワードを入力"
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
@@ -140,6 +172,7 @@ export default function LoginPage() {
                     className="absolute right-0 top-0 h-full px-3 text-white/70 hover:text-white hover:bg-transparent"
                     onClick={() => setShowPassword(!showPassword)}
                     disabled={isLoading}
+                    aria-label={showPassword ? 'パスワードを隠す' : 'パスワードを表示'}
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </Button>
@@ -158,14 +191,14 @@ export default function LoginPage() {
                     ログイン中...
                   </>
                 ) : (
-                  "ログイン"
+                  'ログイン'
                 )}
               </Button>
             </form>
 
             <div className="mt-6 text-center">
               <p className="text-white/70">
-                アカウントをお持ちでない方は{" "}
+                アカウントをお持ちでない方は{' '}
                 <Link
                   href="/signup"
                   className="text-white hover:text-white/80 font-semibold underline underline-offset-4"
