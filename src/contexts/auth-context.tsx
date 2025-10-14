@@ -22,7 +22,13 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
-export function AuthProvider({ children }: { children: ReactNode }) {
+type AuthProviderProps = {
+  children: ReactNode
+  /** 公開ページ（/login, /signup）では false にすると /api/me を呼ばない */
+  autoLoad?: boolean
+}
+
+export function AuthProvider({ children, autoLoad = true }: AuthProviderProps) {
   const [user, setUser] = useState<User>(null)
   const [isLoading, setIsLoading] = useState(false)
 
@@ -33,9 +39,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cache: "no-store",
       signal,
     })
-    if (!res.ok) return null
-    const data = (await res.json()) as { user?: User } | null
-    return data?.user ?? null
+
+    // 200: user を返す
+    if (res.status === 200) {
+      const data = (await res.json()) as { user?: User } | null
+      return data?.user ?? null
+    }
+
+    // 401: 未ログインとして null（例外にしない）
+    if (res.status === 401) return null
+
+    // それ以外は控えめにログって null
+    console.warn("Unexpected /api/me status:", res.status)
+    return null
   }
 
   async function extractErrorMessage(res: Response): Promise<string> {
@@ -43,6 +59,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const json = (await res.json()) as unknown
       if (json && typeof json === "object") {
         const obj = json as Record<string, unknown>
+        if (typeof obj.detail === "string") return obj.detail
+        if (typeof obj.message === "string") return obj.message
         if (typeof obj.error === "string") return obj.error
         if (Array.isArray(obj.errors)) return obj.errors.join(", ")
       }
@@ -54,20 +72,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // -------- セッション復元（CookieのJWTを使う） --------
   useEffect(() => {
+    // /login と /signup では /api/me を呼ばない
+    const pathname = typeof window !== "undefined" ? window.location.pathname : ""
+    const isPublicPath = pathname === "/login" || pathname === "/signup"
+    if (!autoLoad || isPublicPath) return
+
     const ac = new AbortController()
     ;(async () => {
       setIsLoading(true)
       try {
         const u = await fetchMe(ac.signal)
-        setUser(u)
+        if (!ac.signal.aborted) setUser(u)
       } catch {
-        setUser(null)
+        if (!ac.signal.aborted) setUser(null)
       } finally {
         if (!ac.signal.aborted) setIsLoading(false)
       }
     })()
     return () => ac.abort()
-  }, [])
+  }, [autoLoad])
 
   // -------- ログイン（Cookie をサーバ側でセット） --------
   const login = useCallback(async (email: string, password: string) => {
@@ -85,7 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error(msg || "Unauthorized")
       }
 
-      // レスポンス本文に user がなくても、Cookie が付いた状態で /api/me を取り直して確実に復元
+      // Cookie が付与済みなので /api/me を取り直して確実に復元
       const u = await fetchMe()
       setUser(u)
     } finally {
@@ -97,10 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     setIsLoading(true)
     try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        credentials: "include",
-      })
+      await fetch("/api/auth/logout", { method: "POST", credentials: "include" })
     } finally {
       setUser(null)
       setIsLoading(false)

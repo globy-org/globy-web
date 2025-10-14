@@ -3,8 +3,8 @@ import type { NextRequest } from "next/server"
 import { NextResponse } from "next/server"
 
 /** Cookie 名（Access/Refresh） */
-export const AUTH_COOKIE_NAME = "auth_token"         // Access Token 用
-export const REFRESH_COOKIE_NAME = "refresh_token"   // Refresh Token 用（未使用なら削除可）
+export const AUTH_COOKIE_NAME = "auth_token"        // Access Token
+export const REFRESH_COOKIE_NAME = "refresh_token"  // Refresh Token（未使用なら無視）
 
 /**
  * API のベースURLを解決
@@ -111,6 +111,11 @@ export function rotateAccessToken(
     maxAge: atMaxAgeSec,
     expires: atExpires,
   })
+}
+
+/** 既存互換: ATのみ付与する旧ヘルパ（既存コードのため残置） */
+export function attachAuthCookie(res: NextResponse, token: string) {
+  setAuthCookies(res, { accessToken: token, atMaxAgeSec: 900 })
 }
 
 /** レスポンスで認証クッキー（AT/RT）を削除 */
