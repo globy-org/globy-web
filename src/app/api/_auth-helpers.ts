@@ -2,8 +2,9 @@
 import type { NextRequest } from "next/server"
 import { NextResponse } from "next/server"
 
-export const AUTH_COOKIE_NAME = "auth_token"
-export const REFRESH_COOKIE_NAME = "refresh_token" // 未使用なら消してOK
+/** Cookie 名（Access/Refresh） */
+export const AUTH_COOKIE_NAME = "auth_token"        // Access Token
+export const REFRESH_COOKIE_NAME = "refresh_token"  // Refresh Token（未使用なら無視）
 
 /**
  * API のベースURLを解決
@@ -12,39 +13,47 @@ export const REFRESH_COOKIE_NAME = "refresh_token" // 未使用なら消してOK
  */
 export function resolveApiBase(): string {
   const strip = (v?: string) => v?.replace(/\/$/, "")
+  const inDocker =
+    process.env.DOCKER === "1" ||
+    process.env.CONTAINER === "true" ||
+    process.env.IN_DOCKER === "1"
+
   return (
     strip(process.env.API_BASE_URL) ||
     strip(process.env.INTERNAL_API_URL) ||
     strip(process.env.NEXT_PUBLIC_API_BASE_URL) ||
-    "http://localhost:3001"
+    (inDocker ? "http://api:3000" : "http://localhost:3001")
   ) as string
 }
 
-/** リクエストからJWT(Access Token)を取得 */
-export function getJwtFromReq(req: NextRequest): string | null {
-  return req.cookies.get(AUTH_COOKIE_NAME)?.value ?? null
-}
-
-/** リクエストからRefresh Tokenを取得（未使用なら削除OK） */
-export function getRefreshFromReq(req: NextRequest): string | null {
-  return req.cookies.get(REFRESH_COOKIE_NAME)?.value ?? null
-}
-
-/** Cookie共通オプション（ローカル優先で安定動作） */
+/** Cookieの共通オプション（まずはローカル優先で安定動作） */
 function cookieBase() {
   const isProd = process.env.NODE_ENV === "production"
   return {
     httpOnly: true as const,
-    secure: isProd,          // 本番(https): true / ローカル(http): false
+    // 本番(https)は secure:true、ローカル(http)は secure:false
+    secure: isProd,
     sameSite: "lax" as const,
     path: "/",
+    // サブドメイン共有したくなったら Domain を追加:
+    // ...(process.env.COOKIE_DOMAIN ? { domain: process.env.COOKIE_DOMAIN } : {}),
   }
 }
 
+/** リクエストから Access Token(JWT) を取得 */
+export function getJwtFromReq(req: NextRequest): string | null {
+  return req.cookies.get(AUTH_COOKIE_NAME)?.value ?? null
+}
+
+/** リクエストから Refresh Token を取得（未使用なら不要） */
+export function getRefreshFromReq(req: NextRequest): string | null {
+  return req.cookies.get(REFRESH_COOKIE_NAME)?.value ?? null
+}
+
 /**
- * レスポンスに認証クッキー(AT/RT)を付与
- * - atMaxAgeSec: Access Token の寿命（秒） 例: 900 (=15分)
- * - rtMaxAgeSec: Refresh Token の寿命（秒） 例: 2592000 (=30日)
+ * レスポンスに認証クッキーを付与（AT/RT をまとめて設定）
+ * @param atMaxAgeSec  Access Token の寿命（秒） 例: 900 (=15分)
+ * @param rtMaxAgeSec  Refresh Token の寿命（秒） 例: 2592000 (=30日)
  */
 export function setAuthCookies(
   res: NextResponse,
@@ -74,7 +83,7 @@ export function setAuthCookies(
     expires: atExpires,
   })
 
-  // Refresh Token（渡ってきたときだけ設定）
+  // Refresh Token（渡ってきた時のみ設定）
   if (refreshToken) {
     const rtExpires = new Date(Date.now() + rtMaxAgeSec * 1000)
     res.cookies.set({
@@ -104,12 +113,12 @@ export function rotateAccessToken(
   })
 }
 
-/** 既存互換: ATのみ付与する旧ヘルパ（必要なら残す） */
+/** 既存互換: ATのみ付与する旧ヘルパ（既存コードのため残置） */
 export function attachAuthCookie(res: NextResponse, token: string) {
   setAuthCookies(res, { accessToken: token, atMaxAgeSec: 900 })
 }
 
-/** レスポンスで認証クッキーを削除（AT/RTとも） */
+/** レスポンスで認証クッキー（AT/RT）を削除 */
 export function clearAuthCookiesOn(res: NextResponse) {
   const base = cookieBase()
   const past = new Date(0) // 1970-01-01
@@ -117,7 +126,10 @@ export function clearAuthCookiesOn(res: NextResponse) {
   res.cookies.set({ name: REFRESH_COOKIE_NAME, value: "", ...base, maxAge: 0, expires: past })
 }
 
-/** Authorization: Bearer を付与（BFF→Railsのサーバ間） */
+/**
+ * Authorization: Bearer <AT> を付与（BFF→Rails のサーバ間通信用）
+ * - クライアントからは AT を露出させず、BFF がヘッダ付与して中継する
+ */
 export function withBearerFromReq(
   req: NextRequest,
   headers: HeadersInit = {},
@@ -125,3 +137,6 @@ export function withBearerFromReq(
   const jwt = getJwtFromReq(req)
   return jwt ? { ...headers, Authorization: `Bearer ${jwt}` } : headers
 }
+
+
+
