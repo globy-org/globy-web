@@ -61,13 +61,14 @@ export default function LoginPage() {
   const handleDemoLogin = async () => {
     // デモ用資格情報（必要に応じて変更）
     const demoEmail = 'demo@example.com'
-    const demoPassword = 'demo123'
+    const demoPassword = 'password'
     setFormData({ email: demoEmail, password: demoPassword })
     setError('')
     setIsLoading(true)
     try {
       await doLogin(demoEmail, demoPassword)
       router.push('/dashboard')
+      router.refresh()
     } catch (err: unknown) {
       setError(getErrorMessage(err))
     } finally {
@@ -114,7 +115,7 @@ export default function LoginPage() {
                 )}
               </Button>
               <p className="text-xs text-white/50 text-center mt-2">
-                メール: demo@example.com / パスワード: demo123
+                メール: demo@example.com / パスワード: password
               </p>
             </div>
 
