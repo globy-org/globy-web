@@ -2,18 +2,19 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 
-/** ---- 設定 ---- */
+/** ==== 設定 ==== */
 const AUTH_COOKIE_NAME = "auth_token"
 
-// 末尾（last segment）が一致するパスを保護
-const PROTECTED_LAST_SEGMENTS = new Set(["dashboard"])
+// ロケールを除いた「ベースパス」で startsWith 判定する保護パス
+const PROTECTED_PREFIXES = ["/dashboard"]
 
-// 公開パスの先頭プレフィックス（ミドルウェア対象外）
-//   - /api, /_next, 静的拡張子, メタ系は matcher 側で除外しているため、ここではUI系の明示を中心に。
-//   - /login は公開扱い。ただし「ログイン済みなら /dashboard へ」というUI制御はこの中では行わない（下の isLoginPath で個別対応）
+// UI公開パスの先頭プレフィックス
 const PUBLIC_PREFIXES: readonly string[] = ["/signup", "/logout"]
 
-/** ---- ユーティリティ ---- */
+// サポートするロケール（必要に応じて追加）
+const LOCALES = new Set(["ja", "en", "en-US"])
+
+/** ==== ユーティリティ ==== */
 function splitPath(pathname: string) {
   return pathname.split("/").filter(Boolean)
 }
@@ -31,32 +32,40 @@ function isLoginPath(pathname: string): boolean {
   return getLastSegment(pathname) === "login"
 }
 
-// /dashboard, /ja/dashboard など「末尾が dashboard」を保護対象とみなす
+// /ja/foo → { locale:'ja', base:'/foo' } という形に分解
+function splitLocaleBase(pathname: string): { locale: string | null; base: string } {
+  const segs = splitPath(pathname)
+  const maybeLocale = segs[0]
+  if (maybeLocale && LOCALES.has(maybeLocale)) {
+    const rest = "/" + segs.slice(1).join("/")
+    return { locale: maybeLocale, base: rest || "/" }
+  }
+  return { locale: null, base: pathname || "/" }
+}
+
+// /dashboard, /ja/dashboard などを保護対象とみなす（ベースで判定）
 function isProtectedPath(pathname: string): boolean {
-  return PROTECTED_LAST_SEGMENTS.has(getLastSegment(pathname))
+  const { base } = splitLocaleBase(pathname)
+  return PROTECTED_PREFIXES.some((p) => base === p || base.startsWith(`${p}/`))
 }
 
 // UI公開プレフィックス判定（/signup, /logout など）
 function isPublicPath(pathname: string): boolean {
-  return PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))
+  const { base } = splitLocaleBase(pathname)
+  return PUBLIC_PREFIXES.some((p) => base === p || base.startsWith(`${p}/`))
 }
 
-// ロケール（最初のセグメントが言語っぽい時に採用したい場合はここを拡張）
-// ここでは「存在していればそれを維持」するだけで、i18nの付与は行わない
+// ロケール（先頭セグメントがサポート言語のときだけ採用）
 function extractLeadingLocale(pathname: string): string | null {
   const head = getFirstSegment(pathname)
-  // 必要に応じてサポート言語配列で厳密判定: const LOCALES = ['ja','en'] as const
-  // 例）return LOCALES.includes(head as any) ? head! : null
-  // ここでは「何か最初のセグメントがあればロケールかも」として維持目的で返す
-  return head ?? null
+  return head && LOCALES.has(head) ? head : null
 }
 
-// ロケールを保ったまま、ベースパス（login/dashboard など）に差し替える
+// ロケールを保ったまま、ベース（login/dashboard など）に差し替える
 function buildLocalizedPath(pathname: string, targetBase: string): string {
   const locale = extractLeadingLocale(pathname)
   if (!locale) return `/${targetBase}`
   const segs = splitPath(pathname)
-  // 既存の最初のセグメントをロケールと仮定し、/<locale>/<targetBase> に寄せる
   segs.splice(1) // ロケール以外を捨てる
   return `/${locale}/${targetBase}`
 }
@@ -78,13 +87,12 @@ function redirectToLogin(req: NextRequest, reason?: string): NextResponse {
   return NextResponse.redirect(url)
 }
 
-/** ---- ミドルウェア本体 ---- */
+/** ==== ミドルウェア本体 ==== */
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
   const hasAuth = Boolean(req.cookies.get(AUTH_COOKIE_NAME)?.value)
 
   // 1) 公開パス（UIのみ）: 基本スルー
-  //    ※ /api, /_next, 静的やメタは config.matcher で除外しているのでここでは見ない
   if (isPublicPath(pathname)) return NextResponse.next()
 
   // 2) ログイン画面: ログイン済みなら /dashboard に寄せる
@@ -98,9 +106,7 @@ export async function middleware(req: NextRequest) {
       return redirectToLogin(req, "unauthorized")
     }
 
-    // ---- オプション: 厳密検証（/api/me でサーバ検証） ----
-    //   Edge Runtime での外部 fetch は可能ですが、レスポンスを信頼できる同一サイトの検証に限定してください。
-    //   署名検証はRails側（/api/meなど）で行う前提。
+    // ---- 厳密検証（/api/me でサーバ検証） ----
     if (process.env.NEXT_ENABLE_STRICT_AUTH === "1") {
       try {
         const origin = req.nextUrl.origin
@@ -119,13 +125,7 @@ export async function middleware(req: NextRequest) {
   return NextResponse.next()
 }
 
-/** ---- matcher（ミドルウェア適用範囲）----
- * Next.js推奨の「負マッチ」スタイルで以下を除外:
- * - /api（Route Handler）
- * - /_next（静的/内部）
- * - 静的拡張子（.png/.jpg/...）
- * - メタファイル（favicon/sitemap/robots）
- */
+/** ==== matcher（ミドルウェア適用範囲）==== */
 export const config = {
   matcher: [
     "/((?!api|_next|favicon.ico|sitemap.xml|robots.txt|.*\\.(png|jpg|jpeg|gif|svg|webp|ico|txt|xml)$).*)",
